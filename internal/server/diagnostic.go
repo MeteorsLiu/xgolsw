@@ -7,10 +7,15 @@ func (s *Server) textDocumentDiagnostic(params *DocumentDiagnosticParams) (*Docu
 		return nil, err
 	}
 
+	items := result.diagnostics[params.TextDocument.URI]
+	if items == nil {
+		items = []Diagnostic{} // Return empty array instead of nil
+	}
+
 	return &DocumentDiagnosticReport{Value: RelatedFullDocumentDiagnosticReport{
 		FullDocumentDiagnosticReport: FullDocumentDiagnosticReport{
 			Kind:  string(DiagnosticFull),
-			Items: result.diagnostics[params.TextDocument.URI],
+			Items: items,
 		},
 	}}, nil
 }
@@ -24,6 +29,9 @@ func (s *Server) workspaceDiagnostic(params *WorkspaceDiagnosticParams) (*Worksp
 
 	items := make([]WorkspaceDocumentDiagnosticReport, 0, len(result.diagnostics))
 	for file, fileDiags := range result.diagnostics {
+		if fileDiags == nil {
+			fileDiags = []Diagnostic{} // Return empty array instead of nil
+		}
 		items = append(items, WorkspaceDocumentDiagnosticReport{
 			Value: WorkspaceFullDocumentDiagnosticReport{
 				URI: DocumentURI(file),

@@ -1,9 +1,12 @@
 package server
 
 import (
+	"strings"
+
 	"golang.org/x/text/language"
 
 	"github.com/goplus/xgolsw/i18n"
+	"github.com/goplus/xgolsw/protocol"
 )
 
 // initialize handles the initialize request and sets up the server language preference
@@ -11,10 +14,85 @@ func (s *Server) initialize(params *InitializeParams) (*InitializeResult, error)
 	// Set language based on client locale
 	s.setLanguageFromLocale(params.Locale)
 
-	// Create server capabilities
+	// Set workspace root URI from initialize params
+	if params.RootURI != "" {
+		s.workspaceRootURI = params.RootURI
+		// Ensure it ends with /
+		if !strings.HasSuffix(string(s.workspaceRootURI), "/") {
+			s.workspaceRootURI = DocumentURI(string(s.workspaceRootURI) + "/")
+		}
+	} else if params.RootPath != "" {
+		// Fallback to rootPath if rootURI is not available
+		s.workspaceRootURI = DocumentURI("file://" + params.RootPath + "/")
+	}
+
+	// Create server capabilities with all supported features
 	capabilities := ServerCapabilities{
-		// TODO(wyvern): Configure server capabilities based on client capabilities
-		// For now, return empty capabilities as placeholder
+		TextDocumentSync: float64(1), // Full document sync
+		HoverProvider: &protocol.Or_ServerCapabilities_hoverProvider{
+			Value: true,
+		},
+		CompletionProvider: &protocol.CompletionOptions{
+			// Trigger on common characters for better auto-completion experience
+			// Letters trigger completion for identifiers, "." for member access, "(" for function calls
+			TriggerCharacters: []string{".", "(", "\"", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"},
+		},
+		SignatureHelpProvider: &protocol.SignatureHelpOptions{
+			TriggerCharacters: []string{"(", ","},
+		},
+		DeclarationProvider: &protocol.Or_ServerCapabilities_declarationProvider{
+			Value: true,
+		},
+		DefinitionProvider: &protocol.Or_ServerCapabilities_definitionProvider{
+			Value: true,
+		},
+		TypeDefinitionProvider: &protocol.Or_ServerCapabilities_typeDefinitionProvider{
+			Value: true,
+		},
+		ImplementationProvider: &protocol.Or_ServerCapabilities_implementationProvider{
+			Value: true,
+		},
+		ReferencesProvider: &protocol.Or_ServerCapabilities_referencesProvider{
+			Value: true,
+		},
+		DocumentHighlightProvider: &protocol.Or_ServerCapabilities_documentHighlightProvider{
+			Value: true,
+		},
+		DocumentLinkProvider: &protocol.DocumentLinkOptions{},
+		DocumentFormattingProvider: &protocol.Or_ServerCapabilities_documentFormattingProvider{
+			Value: true,
+		},
+		RenameProvider: &protocol.RenameOptions{
+			PrepareProvider: true,
+		},
+		SemanticTokensProvider: &protocol.SemanticTokensOptions{
+			Legend: protocol.SemanticTokensLegend{
+				TokenTypes: []string{
+					"namespace", "type", "interface", "struct", "enum", "enumMember",
+					"variable", "parameter", "function", "method", "property",
+					"keyword", "comment", "string", "number", "operator", "label",
+				},
+				TokenModifiers: []string{
+					"declaration", "readonly", "static", "definition", "defaultLibrary",
+				},
+			},
+			Full: &protocol.Or_SemanticTokensOptions_full{
+				Value: true,
+			},
+		},
+		InlayHintProvider: &protocol.InlayHintOptions{},
+		DiagnosticProvider: &protocol.Or_ServerCapabilities_diagnosticProvider{
+			Value: protocol.DiagnosticOptions{
+				Identifier:            "xgolsw",
+				InterFileDependencies: true,
+				WorkspaceDiagnostics:  true,
+			},
+		},
+		ExecuteCommandProvider: &protocol.ExecuteCommandOptions{
+			Commands: []string{
+				"xgo.renameResource",
+			},
+		},
 	}
 
 	return &InitializeResult{

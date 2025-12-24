@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -338,6 +339,9 @@ func (s *Server) sendTelemetryEvent(data map[string]any) error {
 
 // publishDiagnostics sends diagnostic notifications to the client.
 func (s *Server) publishDiagnostics(uri DocumentURI, diagnostics []Diagnostic) error {
+	if diagnostics == nil {
+		diagnostics = []Diagnostic{} // Ensure we send empty array, not null
+	}
 	params := &PublishDiagnosticsParams{
 		URI:         uri,
 		Diagnostics: diagnostics,
@@ -470,12 +474,27 @@ func (s *Server) fromDocumentURI(documentURI DocumentURI) (string, error) {
 	if !strings.HasPrefix(uri, rootURI) {
 		return "", fmt.Errorf("document URI %q does not have workspace root URI %q as prefix", uri, rootURI)
 	}
-	return strings.TrimPrefix(uri, rootURI), nil
+	relativePath := strings.TrimPrefix(uri, rootURI)
+
+	// Decode URL-encoded path (e.g., "%E5%AE%89%E5%8F%AF.spx" -> "安可.spx")
+	decodedPath, err := url.PathUnescape(relativePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode URL path %q: %w", relativePath, err)
+	}
+
+	return decodedPath, nil
 }
 
 // toDocumentURI returns the [DocumentURI] for a relative path.
 func (s *Server) toDocumentURI(path string) DocumentURI {
-	return DocumentURI(string(s.workspaceRootURI) + path)
+	// URL-encode the path components to match VSCode's URI format
+	// Split by "/" and encode each part separately to preserve path separators
+	parts := strings.Split(path, "/")
+	for i, part := range parts {
+		parts[i] = url.PathEscape(part)
+	}
+	encodedPath := strings.Join(parts, "/")
+	return DocumentURI(string(s.workspaceRootURI) + encodedPath)
 }
 
 // posDocumentURI returns the [DocumentURI] for the given position in the project.
