@@ -74,14 +74,14 @@ type semanticTokenInfo struct {
 func (s *Server) textDocumentSemanticTokensFull(params *SemanticTokensParams) (*SemanticTokens, error) {
 	result, _, astFile, err := s.compileAndGetASTFileForDocumentURI(params.TextDocument.URI)
 	if err != nil {
-		return nil, err
+		return &SemanticTokens{Data: []uint32{}}, nil
 	}
 	if astFile == nil {
-		return nil, nil
+		return &SemanticTokens{Data: []uint32{}}, nil
 	}
 	typeInfo, _ := result.proj.TypeInfo()
 	if typeInfo == nil {
-		return nil, nil
+		return &SemanticTokens{Data: []uint32{}}, nil
 	}
 
 	fset := result.proj.Fset

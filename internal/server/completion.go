@@ -2,6 +2,7 @@ package server
 
 import (
 	"cmp"
+	"encoding/json"
 	"fmt"
 	"go/types"
 	"path"
@@ -24,28 +25,34 @@ import (
 func (s *Server) textDocumentCompletion(params *CompletionParams) ([]CompletionItem, error) {
 	result, spxFile, astFile, err := s.compileAndGetASTFileForDocumentURI(params.TextDocument.URI)
 	if err != nil {
-		return nil, err
+		fmt.Printf("[Completion DEBUG] compile error: %v\n", err)
+		return []CompletionItem{}, nil
 	}
 	if astFile == nil {
-		return nil, nil
+		fmt.Printf("[Completion DEBUG] astFile is nil for URI: %s\n", params.TextDocument.URI)
+		return []CompletionItem{}, nil
 	}
 	if !astFile.Pos().IsValid() {
-		return nil, nil
+		fmt.Printf("[Completion DEBUG] astFile.Pos() not valid\n")
+		return []CompletionItem{}, nil
 	}
 
 	pos := PosAt(result.proj, astFile, params.Position)
 	if !pos.IsValid() {
-		return nil, nil
+		fmt.Printf("[Completion DEBUG] pos not valid at line %d, char %d\n", params.Position.Line, params.Position.Character)
+		return []CompletionItem{}, nil
 	}
 	typeInfo, _ := result.proj.TypeInfo()
 	if typeInfo == nil {
-		return nil, nil
+		fmt.Printf("[Completion DEBUG] typeInfo is nil\n")
+		return []CompletionItem{}, nil
 	}
 
 	astPkg, _ := result.proj.ASTPackage()
 	innermostScope := xgoutil.InnermostScopeAt(result.proj.Fset, typeInfo, astPkg, pos)
 	if innermostScope == nil {
-		return nil, nil
+		fmt.Printf("[Completion DEBUG] innermostScope is nil\n")
+		return []CompletionItem{}, nil
 	}
 	ctx := &completionContext{
 		itemSet:        newCompletionItemSet(),
@@ -60,10 +67,20 @@ func (s *Server) textDocumentCompletion(params *CompletionParams) ([]CompletionI
 		innermostScope: innermostScope,
 	}
 	ctx.analyze()
+	fmt.Printf("[Completion DEBUG] completion kind: %v\n", ctx.kind)
 	if err := ctx.collect(); err != nil {
-		return nil, fmt.Errorf("failed to collect completion items: %w", err)
+		fmt.Printf("[Completion DEBUG] collect error: %v\n", err)
+		return []CompletionItem{}, nil
 	}
-	return ctx.sortedItems(), nil
+	items := ctx.sortedItems()
+	fmt.Printf("[Completion DEBUG] returning %d items\n", len(items))
+	if len(items) > 0 {
+		// Debug: Print first item structure
+		if jsonBytes, err := json.Marshal(items[0]); err == nil {
+			fmt.Printf("[Completion DEBUG] First item JSON: %s\n", string(jsonBytes))
+		}
+	}
+	return items, nil
 }
 
 // completionKind represents different kinds of completion contexts.
@@ -120,6 +137,13 @@ type completionContext struct {
 // analyze analyzes the completion context to determine the kind of completion needed.
 func (ctx *completionContext) analyze() {
 	path, _ := xgoutil.PathEnclosingInterval(ctx.astFile, ctx.pos-1, ctx.pos)
+
+	// Debug: Print AST path
+	fmt.Printf("[Completion DEBUG] AST path length: %d\n", len(path))
+	for i, node := range path {
+		fmt.Printf("[Completion DEBUG] AST path[%d]: %T\n", i, node)
+	}
+
 	for i, node := range slices.Backward(path) {
 		switch node := node.(type) {
 		case *xgoast.ImportSpec:
@@ -457,6 +481,13 @@ func (ctx *completionContext) analyze() {
 		}
 	}
 	if ctx.kind == completionKindUnknown {
+		fmt.Printf("[Completion DEBUG] Still unknown, checking fallback conditions:\n")
+		fmt.Printf("[Completion DEBUG]   isInComment: %v\n", ctx.isInComment())
+		fmt.Printf("[Completion DEBUG]   isInImportStringLit: %v\n", ctx.isInImportStringLit())
+		fmt.Printf("[Completion DEBUG]   isLineStart: %v\n", ctx.isLineStart())
+		fmt.Printf("[Completion DEBUG]   isInIdentifier: %v\n", ctx.isInIdentifier())
+		fmt.Printf("[Completion DEBUG]   isAfterNumberLiteral: %v\n", ctx.isAfterNumberLiteral())
+
 		switch {
 		case ctx.isInComment():
 			ctx.kind = completionKindComment
@@ -561,17 +592,26 @@ func (ctx *completionContext) isInIdentifier() bool {
 	var s xgoscanner.Scanner
 	s.Init(ctx.tokenFile, ctx.astFile.Code, nil, 0)
 
+	fmt.Printf("[Completion DEBUG] isInIdentifier: scanning from pos %d\n", ctx.pos)
 	for {
 		pos, tok, lit := s.Scan()
 		if tok == xgotoken.EOF {
 			break
 		}
 
+		// Debug: Print tokens near our position
+		if pos <= ctx.pos && ctx.pos <= pos+xgotoken.Pos(len(lit))+10 {
+			fmt.Printf("[Completion DEBUG] Token at pos %d: tok=%s lit=%q (pos < ctx.pos: %v, ctx.pos <= end: %v)\n",
+				pos, tok, lit, pos < ctx.pos, ctx.pos <= pos+xgotoken.Pos(len(lit)))
+		}
+
 		// Check if position is inside this token. For identifiers, we should
 		// be either in the middle or at the end to trigger completion (not
 		// at the beginning).
 		if pos < ctx.pos && ctx.pos <= pos+xgotoken.Pos(len(lit)) {
-			return tok == xgotoken.IDENT
+			isIdent := tok == xgotoken.IDENT
+			fmt.Printf("[Completion DEBUG] Position is inside token: tok=%s, isIdent=%v\n", tok, isIdent)
+			return isIdent
 		}
 
 		// If we've scanned past our position, we're not in an identifier.
@@ -579,6 +619,7 @@ func (ctx *completionContext) isInIdentifier() bool {
 			break
 		}
 	}
+	fmt.Printf("[Completion DEBUG] isInIdentifier: no matching token found\n")
 	return false
 }
 
@@ -972,7 +1013,19 @@ func (ctx *completionContext) collectGeneral() error {
 			ctx.itemSet.addSpxDefs(ctx.result.spxDefinitionsFor(obj, "")...)
 
 			isThis := name == "this"
-			isSpxFileMatch := ctx.spxFile == name+".spx" || (ctx.spxFile == ctx.result.mainSpxFile && name == "Game")
+			// Check if this matches the file-specific class or the main project class
+			isSpxFileMatch := false
+			if ctx.result.classfileConfig != nil {
+				// Check if this matches the file's class (e.g., sprite files)
+				fileClass := ctx.result.classfileConfig.GetClassForFile(ctx.spxFile)
+				if fileClass != "" {
+					isSpxFileMatch = name == ctx.result.classfileConfig.GetDisplayName(fileClass)
+				}
+				// Or if it's the main file, check against project class
+				if !isSpxFileMatch && ctx.spxFile == ctx.result.mainSpxFile {
+					isSpxFileMatch = name == ctx.result.classfileConfig.ProjectClass
+				}
+			}
 			isMainScopeObj := isInMainScope && isSpxFileMatch
 			if isThis || isMainScopeObj {
 				named, ok := xgoutil.DerefType(obj.Type()).(*types.Named)
@@ -1086,12 +1139,9 @@ func (ctx *completionContext) collectDot() error {
 		return nil
 	}
 	typ = xgoutil.DerefType(typ)
-	named, ok := typ.(*types.Named)
-	if ok && IsInSpxPkg(named.Obj()) && named.Obj().Name() == "Sprite" {
-		typ = GetSpxSpriteImplType()
-	}
 
 	if iface, ok := typ.Underlying().(*types.Interface); ok {
+		named, _ := typ.(*types.Named)
 		ctx.collectInterfaceMethodCompletions(iface, named, nil)
 	} else if named, ok := typ.(*types.Named); ok && xgoutil.IsNamedStructType(named) {
 		ctx.itemSet.addSpxDefs(ctx.result.spxDefinitionsForNamedStruct(named)...)
@@ -1265,109 +1315,6 @@ func (ctx *completionContext) collectTypeSpecific(typ types.Type) error {
 		return nil
 	}
 
-	var spxResourceIDs []SpxResourceID
-	switch typ {
-	case GetSpxBackdropNameType():
-		spxResourceIDs = slices.Grow(spxResourceIDs, len(ctx.result.spxResourceSet.backdrops))
-		for spxBackdropName := range ctx.result.spxResourceSet.backdrops {
-			spxResourceIDs = append(spxResourceIDs, SpxBackdropResourceID{spxBackdropName})
-		}
-	case GetSpxSpriteType(), GetSpxSpriteImplType():
-		for spxSprite := range ctx.result.spxSpriteResourceAutoBindings {
-			if spxSprite.Type() == typ {
-				ctx.itemSet.addSpxDefs(ctx.result.spxDefinitionsFor(spxSprite, "Game")...)
-			}
-		}
-	case GetSpxSpriteNameType():
-		spxResourceIDs = slices.Grow(spxResourceIDs, len(ctx.result.spxResourceSet.sprites))
-		for spxSpriteName := range ctx.result.spxResourceSet.sprites {
-			spxResourceIDs = append(spxResourceIDs, SpxSpriteResourceID{spxSpriteName})
-		}
-	case GetSpxSpriteCostumeNameType():
-		expectedSpxSprite := ctx.getSpxSpriteResource()
-		for _, spxSprite := range ctx.result.spxResourceSet.sprites {
-			if expectedSpxSprite == nil || spxSprite == expectedSpxSprite {
-				spxResourceIDs = slices.Grow(spxResourceIDs, len(spxSprite.NormalCostumes))
-				for _, spxSpriteCostume := range spxSprite.NormalCostumes {
-					spxResourceIDs = append(spxResourceIDs, SpxSpriteCostumeResourceID{spxSprite.Name, spxSpriteCostume.Name})
-				}
-			}
-		}
-	case GetSpxSpriteAnimationNameType():
-		expectedSpxSprite := ctx.getSpxSpriteResource()
-		for _, spxSprite := range ctx.result.spxResourceSet.sprites {
-			if expectedSpxSprite == nil || spxSprite == expectedSpxSprite {
-				spxResourceIDs = slices.Grow(spxResourceIDs, len(spxSprite.Animations))
-				for _, spxSpriteAnimation := range spxSprite.Animations {
-					spxResourceIDs = append(spxResourceIDs, SpxSpriteAnimationResourceID{spxSprite.Name, spxSpriteAnimation.Name})
-				}
-			}
-		}
-	case GetSpxSoundNameType():
-		spxResourceIDs = slices.Grow(spxResourceIDs, len(ctx.result.spxResourceSet.sounds))
-		for spxSoundName := range ctx.result.spxResourceSet.sounds {
-			spxResourceIDs = append(spxResourceIDs, SpxSoundResourceID{spxSoundName})
-		}
-	case GetSpxWidgetNameType():
-		spxResourceIDs = slices.Grow(spxResourceIDs, len(ctx.result.spxResourceSet.widgets))
-		for spxWidgetName := range ctx.result.spxResourceSet.widgets {
-			spxResourceIDs = append(spxResourceIDs, SpxWidgetResourceID{spxWidgetName})
-		}
-	}
-	for _, spxResourceID := range spxResourceIDs {
-		name := spxResourceID.Name()
-		if !ctx.inStringLit {
-			name = strconv.Quote(name)
-		}
-		ctx.itemSet.add(CompletionItem{
-			Label:            name,
-			Kind:             TextCompletion,
-			Documentation:    &Or_CompletionItem_documentation{Value: MarkupContent{Kind: Markdown, Value: spxResourceID.URI().HTML()}},
-			InsertText:       name,
-			InsertTextFormat: ToPtr(PlainTextTextFormat),
-		})
-	}
-	return nil
-}
-
-// getSpxSpriteResource returns a [SpxSpriteResource] for the current context.
-// It returns nil if no [SpxSpriteResource] can be inferred.
-func (ctx *completionContext) getSpxSpriteResource() *SpxSpriteResource {
-	if ctx.kind != completionKindCall {
-		return nil
-	}
-
-	callExpr, ok := ctx.enclosingNode.(*xgoast.CallExpr)
-	if !ok {
-		return nil
-	}
-	sel, ok := callExpr.Fun.(*xgoast.SelectorExpr)
-	if !ok {
-		if ctx.spxFile == "main.spx" {
-			return nil
-		}
-		return ctx.result.spxResourceSet.sprites[strings.TrimSuffix(ctx.spxFile, ".spx")]
-	}
-
-	ident, ok := sel.X.(*xgoast.Ident)
-	if !ok {
-		return nil
-	}
-	obj := ctx.typeInfo.ObjectOf(ident)
-	if obj == nil {
-		return nil
-	}
-	named, ok := xgoutil.DerefType(obj.Type()).(*types.Named)
-	if !ok {
-		return nil
-	}
-
-	if named == GetSpxSpriteType() {
-		return ctx.result.spxResourceSet.sprites[ident.Name]
-	}
-	if ctx.result.hasSpxSpriteType(named) {
-		return ctx.result.spxResourceSet.sprites[obj.Name()]
-	}
 	return nil
 }
 
@@ -1378,9 +1325,7 @@ func (ctx *completionContext) collectStructLit() error {
 	}
 
 	selectorTypeName := ctx.compositeLitType.Obj().Name()
-	if IsInSpxPkg(ctx.compositeLitType.Obj()) && selectorTypeName == "SpriteImpl" {
-		selectorTypeName = "Sprite"
-	}
+	selectorTypeName = ctx.result.classfileConfig.GetDisplayName(selectorTypeName)
 
 	seenFields := make(map[string]struct{})
 

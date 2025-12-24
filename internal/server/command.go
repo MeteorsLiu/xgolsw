@@ -50,59 +50,7 @@ func (s *Server) workspaceExecuteCommand(params *ExecuteCommandParams) (any, err
 
 // spxRenameResources renames spx resources in the workspace.
 func (s *Server) spxRenameResources(params []XGoRenameResourceParams) (*WorkspaceEdit, error) {
-	result, err := s.compile()
-	if err != nil {
-		return nil, err
-	}
-	return s.spxRenameResourcesWithCompileResult(result, params)
-}
-
-// spxRenameResourcesWithCompileResult renames spx resources in the workspace with the given compile result.
-func (s *Server) spxRenameResourcesWithCompileResult(result *compileResult, params []XGoRenameResourceParams) (*WorkspaceEdit, error) {
-	workspaceEdit := WorkspaceEdit{
-		Changes: make(map[DocumentURI][]TextEdit),
-	}
-	seenTextEdits := make(map[DocumentURI]map[TextEdit]struct{})
-	for _, param := range params {
-		id, err := ParseSpxResourceURI(param.Resource.URI)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse spx resource URI: %w", err)
-		}
-		var changes map[DocumentURI][]TextEdit
-		switch id := id.(type) {
-		case SpxBackdropResourceID:
-			changes, err = s.spxRenameBackdropResource(result, id, param.NewName)
-		case SpxSoundResourceID:
-			changes, err = s.spxRenameSoundResource(result, id, param.NewName)
-		case SpxSpriteResourceID:
-			changes, err = s.spxRenameSpriteResource(result, id, param.NewName)
-		case SpxSpriteCostumeResourceID:
-			changes, err = s.spxRenameSpriteCostumeResource(result, id, param.NewName)
-		case SpxSpriteAnimationResourceID:
-			changes, err = s.spxRenameSpriteAnimationResource(result, id, param.NewName)
-		case SpxWidgetResourceID:
-			changes, err = s.spxRenameWidgetResource(result, id, param.NewName)
-		default:
-			return nil, fmt.Errorf("unsupported spx resource type: %T", id)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("failed to rename spx resource %q: %w", param.Resource.URI, err)
-		}
-		for documentURI, textEdits := range changes {
-			if _, ok := seenTextEdits[documentURI]; !ok {
-				seenTextEdits[documentURI] = make(map[TextEdit]struct{})
-			}
-			for _, textEdit := range textEdits {
-				if _, ok := seenTextEdits[documentURI][textEdit]; ok {
-					continue
-				}
-				seenTextEdits[documentURI][textEdit] = struct{}{}
-
-				workspaceEdit.Changes[documentURI] = append(workspaceEdit.Changes[documentURI], textEdit)
-			}
-		}
-	}
-	return &workspaceEdit, nil
+	return nil, fmt.Errorf("resource renaming is no longer supported")
 }
 
 // spxGetInputSlots gets input slots in a document.
@@ -501,19 +449,6 @@ func createValueInputSlotFromBasicLit(result *compileResult, lit *xgoast.BasicLi
 	if declaredType != nil {
 		accept.Type = inferSpxInputTypeFromType(declaredType)
 	}
-	if accept.Type == SpxInputTypeResourceName {
-		for _, spxResourceRef := range result.spxResourceRefs {
-			if spxResourceRef.Node == lit {
-				input.Type = SpxInputTypeResourceName
-				input.Value = spxResourceRef.ID.URI()
-				accept.ResourceContext = ToPtr(spxResourceRef.ID.ContextURI())
-				break
-			}
-		}
-		if accept.ResourceContext == nil {
-			return nil
-		}
-	}
 
 	return &SpxInputSlot{
 		Kind:            SpxInputSlotKindValue,
@@ -556,7 +491,7 @@ func createValueInputSlotFromIdent(result *compileResult, ident *xgoast.Ident, d
 		SpxInputTypeSpecialObj,
 		SpxInputTypeRotationStyle:
 		obj := typeInfo.ObjectOf(ident)
-		if obj != nil && !IsInSpxPkg(obj) {
+		if obj != nil && !IsInClassfilePkg(obj, result.classfileConfig) {
 			break
 		}
 		cnst, ok := obj.(*types.Const)
@@ -576,32 +511,6 @@ func createValueInputSlotFromIdent(result *compileResult, ident *xgoast.Ident, d
 	accept := SpxInputSlotAccept{Type: input.Type}
 	if declaredType != nil {
 		accept.Type = inferSpxInputTypeFromType(declaredType)
-	}
-	if accept.Type == SpxInputTypeResourceName {
-		switch declaredType {
-		case GetSpxBackdropNameType():
-			accept.ResourceContext = ToPtr(SpxBackdropResourceContextURI)
-		case GetSpxSoundNameType():
-			accept.ResourceContext = ToPtr(SpxSoundResourceContextURI)
-		case GetSpxSpriteNameType():
-			accept.ResourceContext = ToPtr(SpxSpriteResourceContextURI)
-		case GetSpxSpriteCostumeNameType():
-			spxSpriteResource := inferSpxSpriteResourceEnclosingNode(result, ident)
-			if spxSpriteResource == nil {
-				return nil
-			}
-			accept.ResourceContext = ToPtr(FormatSpxSpriteCostumeResourceContextURI(spxSpriteResource.Name))
-		case GetSpxSpriteAnimationNameType():
-			spxSpriteResource := inferSpxSpriteResourceEnclosingNode(result, ident)
-			if spxSpriteResource == nil {
-				return nil
-			}
-			accept.ResourceContext = ToPtr(FormatSpxSpriteAnimationResourceContextURI(spxSpriteResource.Name))
-		case GetSpxWidgetNameType():
-			accept.ResourceContext = ToPtr(SpxWidgetResourceContextURI)
-		default:
-			return nil
-		}
 	}
 
 	return &SpxInputSlot{
@@ -679,7 +588,7 @@ func createValueInputSlotFromColorFuncCall(result *compileResult, callExpr *xgoa
 	}
 
 	fun := xgoutil.FuncFromCallExpr(typeInfo, callExpr)
-	if fun == nil || !IsInSpxPkg(fun) || !isSpxColorFunc(fun) {
+	if fun == nil || !IsInClassfilePkg(fun, result.classfileConfig) || !isSpxColorFunc(fun) {
 		return nil
 	}
 
@@ -769,77 +678,7 @@ func inferSpxInputTypeFromType(typ types.Type) SpxInputType {
 		return SpxInputTypeUnknown
 	}
 
-	if IsSpxResourceNameType(typ) {
-		return SpxInputTypeResourceName
-	}
-	switch typ {
-	case GetSpxDirectionType():
-		return SpxInputTypeDirection
-	case GetSpxLayerActionType():
-		return SpxInputTypeLayerAction
-	case GetSpxDirActionType():
-		return SpxInputTypeDirAction
-	case GetSpxEffectKindType():
-		return SpxInputTypeEffectKind
-	case GetSpxKeyType():
-		return SpxInputTypeKey
-	case GetSpxSpecialObjType():
-		return SpxInputTypeSpecialObj
-	case GetSpxRotationStyleType():
-		return SpxInputTypeRotationStyle
-	}
 	return SpxInputTypeUnknown
-}
-
-// inferSpxSpriteResourceEnclosingNode infers the enclosing [SpxSpriteResource]
-// for the given node. It returns nil if no [SpxSpriteResource] can be inferred.
-func inferSpxSpriteResourceEnclosingNode(result *compileResult, node xgoast.Node) *SpxSpriteResource {
-	typeInfo, _ := result.proj.TypeInfo()
-	if typeInfo == nil {
-		return nil
-	}
-	spxFile := xgoutil.NodeFilename(result.proj.Fset, node)
-	astPkg, _ := result.proj.ASTPackage()
-	astFile := xgoutil.NodeASTFile(result.proj.Fset, astPkg, node)
-
-	var spxSpriteResource *SpxSpriteResource
-	xgoutil.WalkPathEnclosingInterval(astFile, node.Pos(), node.End(), false, func(node xgoast.Node) bool {
-		if node == nil {
-			return true
-		}
-
-		callExpr, ok := node.(*xgoast.CallExpr)
-		if !ok {
-			return true
-		}
-
-		var spxSpriteName string
-		if sel, ok := callExpr.Fun.(*xgoast.SelectorExpr); ok {
-			ident, ok := sel.X.(*xgoast.Ident)
-			if !ok {
-				return false
-			}
-			obj := typeInfo.ObjectOf(ident)
-			if obj == nil {
-				return false
-			}
-			named, ok := xgoutil.DerefType(obj.Type()).(*types.Named)
-			if !ok {
-				return false
-			}
-
-			if named == GetSpxSpriteType() {
-				spxSpriteName = ident.Name
-			} else if result.hasSpxSpriteType(named) {
-				spxSpriteName = obj.Name()
-			}
-		} else if spxFile != "main.spx" {
-			spxSpriteName = strings.TrimSuffix(spxFile, ".spx")
-		}
-		spxSpriteResource = result.spxResourceSet.sprites[spxSpriteName]
-		return false
-	})
-	return spxSpriteResource
 }
 
 // isBlank checks if an expression is a blank identifier (_).

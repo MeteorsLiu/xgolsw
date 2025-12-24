@@ -18,22 +18,6 @@ func (s *Server) textDocumentDocumentLink(params *DocumentLinkParams) ([]Documen
 		return nil, nil
 	}
 
-	// Add links for spx resource references.
-	links := make([]DocumentLink, 0, len(result.spxResourceRefs))
-	for _, spxResourceRef := range result.spxResourceRefs {
-		if xgoutil.NodeFilename(result.proj.Fset, spxResourceRef.Node) != spxFile {
-			continue
-		}
-		target := URI(spxResourceRef.ID.URI())
-		links = append(links, DocumentLink{
-			Range:  RangeForNode(result.proj, spxResourceRef.Node),
-			Target: &target,
-			Data: SpxResourceRefDocumentLinkData{
-				Kind: spxResourceRef.Kind,
-			},
-		})
-	}
-
 	typeInfo, _ := result.proj.TypeInfo()
 	if typeInfo == nil {
 		return nil, nil
@@ -41,7 +25,7 @@ func (s *Server) textDocumentDocumentLink(params *DocumentLinkParams) ([]Documen
 	astPkg, _ := result.proj.ASTPackage()
 
 	// Add links for spx definitions.
-	links = slices.Grow(links, len(typeInfo.Defs)+len(typeInfo.Uses))
+	links := make([]DocumentLink, 0, len(typeInfo.Defs)+len(typeInfo.Uses))
 	addLinksForIdent := func(ident *xgoast.Ident) {
 		if ident.Implicit() || xgoutil.NodeFilename(result.proj.Fset, ident) != spxFile {
 			return

@@ -1,0 +1,12 @@
+{
+  "classfile": {
+    "projectClass": "Game",
+    "projectExt": ".spx",
+    "workClasses": {
+      ".spx": "SpriteImpl"
+    },
+    "pkgPaths": [
+      "github.com/goplus/spx/v2"
+    ]
+  }
+}

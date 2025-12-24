@@ -414,6 +414,19 @@ var (
 		return spxPkg
 	})
 
+
+
+
+
+
+
+
+
+
+
+
+
+
 	// GetSpxPkgDefinitions returns the spx definitions for the spx package.
 	GetSpxPkgDefinitions = sync.OnceValue(func() []SpxDefinition {
 		spxPkg := GetSpxPkg()
@@ -852,3 +865,4 @@ func GetSpxDefinitionForPkg(pkgName *types.PkgName, pkgDoc *pkgdoc.PkgDoc) (def 
 	}
 	return
 }
+

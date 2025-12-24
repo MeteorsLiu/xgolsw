@@ -14,13 +14,13 @@ import (
 func (s *Server) textDocumentInlayHint(params *InlayHintParams) ([]InlayHint, error) {
 	result, _, astFile, err := s.compileAndGetASTFileForDocumentURI(params.TextDocument.URI)
 	if err != nil {
-		return nil, err
+		return []InlayHint{}, nil
 	}
 	if astFile == nil {
-		return nil, nil
+		return []InlayHint{}, nil
 	}
 	if !astFile.Pos().IsValid() {
-		return nil, nil
+		return []InlayHint{}, nil
 	}
 
 	rangeStart := PosAt(result.proj, astFile, params.Range.Start)
@@ -34,7 +34,7 @@ func (s *Server) textDocumentInlayHint(params *InlayHintParams) ([]InlayHint, er
 func collectInlayHints(result *compileResult, astFile *xgoast.File, rangeStart, rangeEnd xgotoken.Pos) []InlayHint {
 	typeInfo, _ := result.proj.TypeInfo()
 	if typeInfo == nil {
-		return nil
+		return []InlayHint{}
 	}
 
 	var inlayHints []InlayHint

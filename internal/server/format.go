@@ -23,8 +23,13 @@ func (s *Server) textDocumentFormatting(params *DocumentFormattingParams) ([]Tex
 	if err != nil {
 		return nil, fmt.Errorf("failed to get file path from document uri %q: %w", params.TextDocument.URI, err)
 	}
-	if path.Ext(spxFile) != ".spx" {
-		return nil, nil // Not an spx source file.
+	// Check if this is a classfile source file
+	projectExt := ""
+	if s.classfileConfig != nil {
+		projectExt = s.classfileConfig.ProjectExt
+	}
+	if projectExt == "" || path.Ext(spxFile) != projectExt {
+		return nil, nil // Not a classfile source file.
 	}
 
 	snapshot := s.getProj().Snapshot()
@@ -125,7 +130,7 @@ func (s *Server) formatSpxLambda(snapshot *xgo.Project, spxFile string) ([]byte,
 	}
 
 	// Eliminate unused lambda parameters.
-	eliminateUnusedLambdaParams(snapshot, astFile)
+	eliminateUnusedLambdaParams(snapshot, astFile, s.classfileConfig)
 
 	// Format the modified AST.
 	var formattedBuf bytes.Buffer
@@ -519,7 +524,7 @@ func getDeclDoc(decl xgoast.Decl) *xgoast.CommentGroup {
 //  2. Only the last parameter of the lambda is checked.
 //
 // We may complete it in the future, if needed.
-func eliminateUnusedLambdaParams(proj *xgo.Project, astFile *xgoast.File) {
+func eliminateUnusedLambdaParams(proj *xgo.Project, astFile *xgoast.File, config *ClassfileConfig) {
 	typeInfo, _ := proj.TypeInfo()
 	if typeInfo == nil {
 		return
@@ -533,7 +538,7 @@ func eliminateUnusedLambdaParams(proj *xgo.Project, astFile *xgoast.File) {
 		if !ok {
 			return true
 		}
-		funType, funTypeOverloads := getFuncAndOverloadsType(proj, funIdent)
+		funType, funTypeOverloads := getFuncAndOverloadsType(proj, funIdent, config)
 		if funType == nil || funTypeOverloads == nil {
 			return true
 		}
@@ -601,7 +606,7 @@ func eliminateUnusedLambdaParams(proj *xgo.Project, astFile *xgoast.File) {
 }
 
 // getFuncAndOverloadsType returns the function type and all its overloads.
-func getFuncAndOverloadsType(proj *xgo.Project, funIdent *xgoast.Ident) (fun *types.Func, overloads []*types.Func) {
+func getFuncAndOverloadsType(proj *xgo.Project, funIdent *xgoast.Ident, config *ClassfileConfig) (fun *types.Func, overloads []*types.Func) {
 	typeInfo, _ := proj.TypeInfo()
 	if typeInfo == nil {
 		return
@@ -618,13 +623,11 @@ func getFuncAndOverloadsType(proj *xgo.Project, funIdent *xgoast.Ident) (fun *ty
 	if pkg == nil {
 		return
 	}
-	recvTypeName := SelectorTypeNameForIdent(proj, funIdent)
+	recvTypeName := SelectorTypeNameForIdent(proj, funIdent, config)
 	if recvTypeName == "" {
 		return
 	}
-	if IsInSpxPkg(funTypeObj) && recvTypeName == "Sprite" {
-		recvTypeName = "SpriteImpl"
-	}
+	recvTypeName = config.NormalizeClassName(recvTypeName)
 
 	recvType := funType.Pkg().Scope().Lookup(recvTypeName).Type()
 	if recvType == nil {

@@ -414,6 +414,102 @@ var (
 		return spxPkg
 	})
 
+	// GetSpxGameType returns the [spx.Game] type.
+	GetSpxGameType = sync.OnceValue(func() *types.Named {
+		spxPkg := GetSpxPkg()
+		return spxPkg.Scope().Lookup("Game").Type().(*types.Named)
+	})
+
+	// GetSpxBackdropNameType returns the [spx.BackdropName] type.
+	GetSpxBackdropNameType = sync.OnceValue(func() *types.Alias {
+		spxPkg := GetSpxPkg()
+		return spxPkg.Scope().Lookup("BackdropName").Type().(*types.Alias)
+	})
+
+	// GetSpxSpriteType returns the [spx.Sprite] type.
+	GetSpxSpriteType = sync.OnceValue(func() *types.Named {
+		spxPkg := GetSpxPkg()
+		return spxPkg.Scope().Lookup("Sprite").Type().(*types.Named)
+	})
+
+	// GetSpxSpriteImplType returns the [spx.SpriteImpl] type.
+	GetSpxSpriteImplType = sync.OnceValue(func() *types.Named {
+		spxPkg := GetSpxPkg()
+		return spxPkg.Scope().Lookup("SpriteImpl").Type().(*types.Named)
+	})
+
+	// GetSpxSpriteNameType returns the [spx.SpriteName] type.
+	GetSpxSpriteNameType = sync.OnceValue(func() *types.Alias {
+		spxPkg := GetSpxPkg()
+		return spxPkg.Scope().Lookup("SpriteName").Type().(*types.Alias)
+	})
+
+	// GetSpxSpriteCostumeNameType returns the [spx.SpriteCostumeName] type.
+	GetSpxSpriteCostumeNameType = sync.OnceValue(func() *types.Alias {
+		spxPkg := GetSpxPkg()
+		return spxPkg.Scope().Lookup("SpriteCostumeName").Type().(*types.Alias)
+	})
+
+	// GetSpxSpriteAnimationNameType returns the [spx.SpriteAnimationName] type.
+	GetSpxSpriteAnimationNameType = sync.OnceValue(func() *types.Alias {
+		spxPkg := GetSpxPkg()
+		return spxPkg.Scope().Lookup("SpriteAnimationName").Type().(*types.Alias)
+	})
+
+	// GetSpxSoundNameType returns the [spx.SoundName] type.
+	GetSpxSoundNameType = sync.OnceValue(func() *types.Alias {
+		spxPkg := GetSpxPkg()
+		return spxPkg.Scope().Lookup("SoundName").Type().(*types.Alias)
+	})
+
+	// GetSpxWidgetNameType returns the [spx.WidgetName] type.
+	GetSpxWidgetNameType = sync.OnceValue(func() *types.Alias {
+		spxPkg := GetSpxPkg()
+		return spxPkg.Scope().Lookup("WidgetName").Type().(*types.Alias)
+	})
+
+	// GetSpxDirectionType returns the [spx.Direction] type.
+	GetSpxDirectionType = sync.OnceValue(func() *types.Alias {
+		spxPkg := GetSpxPkg()
+		return spxPkg.Scope().Lookup("Direction").Type().(*types.Alias)
+	})
+
+	// GetSpxLayerActionType returns the [spx.LayerAction] type.
+	GetSpxLayerActionType = sync.OnceValue(func() *types.Named {
+		spxPkg := GetSpxPkg()
+		return spxPkg.Scope().Lookup("layerAction").Type().(*types.Named)
+	})
+
+	// GetSpxDirActionType returns the [spx.DirLayer] type.
+	GetSpxDirActionType = sync.OnceValue(func() *types.Named {
+		spxPkg := GetSpxPkg()
+		return spxPkg.Scope().Lookup("dirAction").Type().(*types.Named)
+	})
+
+	// GetSpxEffectKindType returns the [spx.EffectKind] type.
+	GetSpxEffectKindType = sync.OnceValue(func() *types.Named {
+		spxPkg := GetSpxPkg()
+		return spxPkg.Scope().Lookup("EffectKind").Type().(*types.Named)
+	})
+
+	// GetSpxKeyType returns the [spx.Key] type.
+	GetSpxKeyType = sync.OnceValue(func() *types.Alias {
+		spxPkg := GetSpxPkg()
+		return spxPkg.Scope().Lookup("Key").Type().(*types.Alias)
+	})
+
+	// GetSpxSpecialObjType returns the [spx.SpecialObj] type.
+	GetSpxSpecialObjType = sync.OnceValue(func() *types.Named {
+		spxPkg := GetSpxPkg()
+		return spxPkg.Scope().Lookup("Edge").Type().(*types.Named)
+	})
+
+	// GetSpxRotationStyleType returns the [spx.RotationStyle] type.
+	GetSpxRotationStyleType = sync.OnceValue(func() *types.Named {
+		spxPkg := GetSpxPkg()
+		return spxPkg.Scope().Lookup("RotationStyle").Type().(*types.Named)
+	})
+
 	// GetSpxPkgDefinitions returns the spx definitions for the spx package.
 	GetSpxPkgDefinitions = sync.OnceValue(func() []SpxDefinition {
 		spxPkg := GetSpxPkg()
@@ -851,4 +947,60 @@ func GetSpxDefinitionForPkg(pkgName *types.PkgName, pkgDoc *pkgdoc.PkgDoc) (def 
 		CompletionItemInsertTextFormat: PlainTextTextFormat,
 	}
 	return
+}
+
+// nonMainPkgSpxResourceNameTypeFuncCache is a cache of non-main package
+// function spx resource name type parameter check results.
+var nonMainPkgSpxResourceNameTypeFuncCache sync.Map // map[*types.Func]bool
+
+// HasSpxResourceNameTypeParams reports if a function has parameters of spx
+// resource name types.
+func HasSpxResourceNameTypeParams(fun *types.Func, config *ClassfileConfig) (has bool) {
+	if fun == nil {
+		return false
+	}
+	if !xgoutil.IsInMainPkg(fun) {
+		if !IsInClassfilePkg(fun, config) {
+			// Early return for non-spx packages since they cannot
+			// have spx resource type parameters.
+			return false
+		}
+
+		if hasIface, ok := nonMainPkgSpxResourceNameTypeFuncCache.Load(fun); ok {
+			return hasIface.(bool)
+		}
+		defer func() {
+			nonMainPkgSpxResourceNameTypeFuncCache.Store(fun, has)
+		}()
+	}
+
+	funcSig, ok := fun.Type().(*types.Signature)
+	if !ok {
+		return false
+	}
+
+	for param := range funcSig.Params().Variables() {
+		paramType := xgoutil.DerefType(param.Type())
+		if slice, ok := paramType.(*types.Slice); ok {
+			paramType = slice.Elem()
+		}
+		if IsSpxResourceNameType(paramType) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsSpxResourceNameType reports whether the given type is a spx resource name type.
+func IsSpxResourceNameType(typ types.Type) bool {
+	switch typ {
+	case GetSpxBackdropNameType(),
+		GetSpxSpriteNameType(),
+		GetSpxSpriteCostumeNameType(),
+		GetSpxSpriteAnimationNameType(),
+		GetSpxSoundNameType(),
+		GetSpxWidgetNameType():
+		return true
+	}
+	return false
 }

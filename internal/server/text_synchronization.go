@@ -81,8 +81,8 @@ func (s *Server) didSave(params *DidSaveTextDocumentParams) error {
 // When a document is closed, its diagnostics are cleared by sending an empty
 // diagnostics array to the client.
 func (s *Server) didClose(params *DidCloseTextDocumentParams) error {
-	// Clear diagnostics when file is closed
-	return s.publishDiagnostics(params.TextDocument.URI, nil)
+	// Clear diagnostics when file is closed (must be empty array, not nil)
+	return s.publishDiagnostics(params.TextDocument.URI, []Diagnostic{})
 }
 
 // didModifyFile is a shared implementation for handling document modifications.

@@ -71,10 +71,11 @@ type (
 	SemanticTokensParams   = protocol.SemanticTokensParams
 	SemanticTokens         = protocol.SemanticTokens
 
-	SignatureHelpParams  = protocol.SignatureHelpParams
-	SignatureHelp        = protocol.SignatureHelp
-	SignatureInformation = protocol.SignatureInformation
-	ParameterInformation = protocol.ParameterInformation
+	SignatureHelpParams                      = protocol.SignatureHelpParams
+	SignatureHelp                            = protocol.SignatureHelp
+	SignatureInformation                     = protocol.SignatureInformation
+	ParameterInformation                     = protocol.ParameterInformation
+	Or_SignatureInformation_documentation    = protocol.Or_SignatureInformation_documentation
 
 	InitializeParams     = protocol.InitializeParams
 	InitializeResult     = protocol.InitializeResult
@@ -83,6 +84,17 @@ type (
 	InitializedParams    = protocol.InitializedParams
 	ExecuteCommandParams = protocol.ExecuteCommandParams
 	CancelParams         = protocol.CancelParams
+
+	CompletionOptions           = protocol.CompletionOptions
+	SignatureHelpOptions        = protocol.SignatureHelpOptions
+	DocumentLinkOptions         = protocol.DocumentLinkOptions
+	RenameOptions               = protocol.RenameOptions
+	SemanticTokensOptions       = protocol.SemanticTokensOptions
+	SemanticTokensLegend        = protocol.SemanticTokensLegend
+	InlayHintOptions            = protocol.InlayHintOptions
+	DiagnosticOptions           = protocol.DiagnosticOptions
+	ExecuteCommandOptions       = protocol.ExecuteCommandOptions
+	Or_ServerCapabilities_hover = protocol.Or_ServerCapabilities_hoverProvider
 
 	DidOpenTextDocumentParams   = protocol.DidOpenTextDocumentParams
 	DidChangeTextDocumentParams = protocol.DidChangeTextDocumentParams
@@ -342,7 +354,7 @@ type XGoInputSpxColorValue struct {
 // document link.
 type XGoResourceRefDocumentLinkData struct {
 	// The kind of the XGo resource reference.
-	Kind SpxResourceRefKind `json:"kind"`
+	Kind string `json:"kind"`
 }
 
 // XGoCompletionItemData represents data in a completion item.

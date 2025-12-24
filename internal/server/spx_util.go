@@ -2,7 +2,6 @@ package server
 
 import (
 	"go/types"
-	"path"
 	"regexp"
 
 	xgoast "github.com/goplus/xgo/ast"
@@ -21,16 +20,19 @@ func IsSpxEventHandlerFuncName(name string) bool {
 	return spxEventHandlerFuncNameRE.MatchString(name)
 }
 
-// IsInSpxPkg reports whether the given object is defined in the spx package.
-func IsInSpxPkg(obj types.Object) bool {
-	return obj != nil && obj.Pkg() == GetSpxPkg()
+// IsInClassfilePkg reports whether the given object is defined in one of the classfile packages.
+func IsInClassfilePkg(obj types.Object, config *ClassfileConfig) bool {
+	if obj == nil || obj.Pkg() == nil || config == nil {
+		return false
+	}
+	return config.IsClassfilePkg(xgoutil.PkgPath(obj.Pkg()))
 }
 
 // GetSimplifiedTypeString returns the string representation of the given type,
-// with the spx package name omitted while other packages use their short names.
-func GetSimplifiedTypeString(typ types.Type) string {
+// with the classfile package names omitted while other packages use their short names.
+func GetSimplifiedTypeString(typ types.Type, config *ClassfileConfig) string {
 	return types.TypeString(typ, func(p *types.Package) string {
-		if p == GetSpxPkg() {
+		if config != nil && config.IsClassfilePkg(xgoutil.PkgPath(p)) {
 			return ""
 		}
 		return p.Name()
@@ -39,7 +41,7 @@ func GetSimplifiedTypeString(typ types.Type) string {
 
 // SelectorTypeNameForIdent returns the selector type name for the given
 // identifier. It returns empty string if no selector can be inferred.
-func SelectorTypeNameForIdent(proj *xgo.Project, ident *xgoast.Ident) string {
+func SelectorTypeNameForIdent(proj *xgo.Project, ident *xgoast.Ident, config *ClassfileConfig) string {
 	typeInfo, _ := proj.TypeInfo()
 	if typeInfo == nil {
 		return ""
@@ -55,18 +57,18 @@ func SelectorTypeNameForIdent(proj *xgo.Project, ident *xgoast.Ident) string {
 		return ""
 	}
 
-	// Handle spx package's implicit receiver semantics.
-	if typeName := tryGetSpxImplicitReceiver(proj, astFile, ident, obj); typeName != "" {
+	// Handle classfile package's implicit receiver semantics.
+	if typeName := tryGetClassfileImplicitReceiver(proj, astFile, ident, obj, config); typeName != "" {
 		return typeName
 	}
 
 	// Infer type from object properties.
-	return getTypeFromObject(typeInfo, obj)
+	return getTypeFromObject(typeInfo, obj, config)
 }
 
-// tryGetSpxImplicitReceiver handles spx package's special implicit receiver semantics.
-func tryGetSpxImplicitReceiver(proj *xgo.Project, astFile *xgoast.File, ident *xgoast.Ident, obj types.Object) string {
-	if !IsInSpxPkg(obj) {
+// tryGetClassfileImplicitReceiver handles classfile package's special implicit receiver semantics.
+func tryGetClassfileImplicitReceiver(proj *xgo.Project, astFile *xgoast.File, ident *xgoast.Ident, obj types.Object, config *ClassfileConfig) string {
+	if !IsInClassfilePkg(obj, config) || config == nil {
 		return ""
 	}
 	typeInfo, _ := proj.TypeInfo()
@@ -83,21 +85,19 @@ func tryGetSpxImplicitReceiver(proj *xgo.Project, astFile *xgoast.File, ident *x
 		return ""
 	}
 
-	spxFile := xgoutil.NodeFilename(proj.Fset, ident)
-	if path.Base(spxFile) == "main.spx" {
-		return "Game"
-	}
-	return "Sprite"
+	// Determine the class based on the file
+	filePath := xgoutil.NodeFilename(proj.Fset, ident)
+	return config.GetDisplayClassForFile(filePath)
 }
 
 // getTypeFromObject infers type from the identifier's object.
-func getTypeFromObject(typeInfo *xgotypes.Info, obj types.Object) string {
+func getTypeFromObject(typeInfo *xgotypes.Info, obj types.Object, config *ClassfileConfig) string {
 	switch obj := obj.(type) {
 	case *types.Var:
 		if !obj.IsField() {
 			return ""
 		}
-		return findFieldOwnerType(typeInfo, obj)
+		return findFieldOwnerType(typeInfo, obj, config)
 	case *types.Func:
 		sig, ok := obj.Type().(*types.Signature)
 		if !ok {
@@ -107,19 +107,20 @@ func getTypeFromObject(typeInfo *xgotypes.Info, obj types.Object) string {
 		if recv == nil {
 			return ""
 		}
-		return extractTypeName(xgoutil.DerefType(recv.Type()))
+		return extractTypeName(xgoutil.DerefType(recv.Type()), config)
 	}
 	return ""
 }
 
 // extractTypeName extracts a clean type name from a types.Type.
-func extractTypeName(typ types.Type) string {
+func extractTypeName(typ types.Type, config *ClassfileConfig) string {
 	switch typ := typ.(type) {
 	case *types.Named:
 		obj := typ.Obj()
 		typeName := obj.Name()
-		if IsInSpxPkg(obj) && typeName == "SpriteImpl" {
-			return "Sprite"
+		// Handle embedded classes that end with "Impl"
+		if IsInClassfilePkg(obj, config) && len(typeName) > 4 && typeName[len(typeName)-4:] == "Impl" {
+			return typeName[:len(typeName)-4]
 		}
 		return typeName
 	case *types.Interface:
@@ -132,7 +133,7 @@ func extractTypeName(typ types.Type) string {
 }
 
 // findFieldOwnerType finds the type that owns a given field.
-func findFieldOwnerType(typeInfo *xgotypes.Info, field *types.Var) string {
+func findFieldOwnerType(typeInfo *xgotypes.Info, field *types.Var, config *ClassfileConfig) string {
 	if !field.IsField() {
 		return ""
 	}
@@ -157,17 +158,17 @@ func findFieldOwnerType(typeInfo *xgotypes.Info, field *types.Var) string {
 		}
 
 		// Check if this struct contains our field.
-		if ownerName := checkStructForField(named, field, fieldPkg); ownerName != "" {
+		if ownerName := checkStructForField(named, field, fieldPkg, config); ownerName != "" {
 			return ownerName
 		}
 	}
 
 	// Fallback: search through all type definitions.
-	return searchAllDefsForField(typeInfo, field)
+	return searchAllDefsForField(typeInfo, field, config)
 }
 
 // checkStructForField checks if a struct type contains the given field.
-func checkStructForField(named *types.Named, field *types.Var, fieldPkg *types.Package) string {
+func checkStructForField(named *types.Named, field *types.Var, fieldPkg *types.Package, config *ClassfileConfig) string {
 	foundObj, indices, _ := types.LookupFieldOrMethod(named, false, fieldPkg, field.Name())
 	if foundObj == nil || len(indices) == 0 {
 		return ""
@@ -179,14 +180,15 @@ func checkStructForField(named *types.Named, field *types.Var, fieldPkg *types.P
 	}
 
 	typeName := named.Obj().Name()
-	if IsInSpxPkg(named.Obj()) && typeName == "SpriteImpl" {
-		return "Sprite"
+	// Handle embedded classes that end with "Impl"
+	if IsInClassfilePkg(named.Obj(), config) && len(typeName) > 4 && typeName[len(typeName)-4:] == "Impl" {
+		return typeName[:len(typeName)-4]
 	}
 	return typeName
 }
 
 // searchAllDefsForField is a fallback method that searches all type definitions.
-func searchAllDefsForField(typeInfo *xgotypes.Info, field *types.Var) string {
+func searchAllDefsForField(typeInfo *xgotypes.Info, field *types.Var, config *ClassfileConfig) string {
 	fieldPkg := field.Pkg()
 	for _, def := range typeInfo.Defs {
 		if def == nil || def.Pkg() != fieldPkg {
@@ -198,7 +200,7 @@ func searchAllDefsForField(typeInfo *xgotypes.Info, field *types.Var) string {
 			continue
 		}
 
-		if ownerName := checkStructForField(named, field, fieldPkg); ownerName != "" {
+		if ownerName := checkStructForField(named, field, fieldPkg, config); ownerName != "" {
 			return ownerName
 		}
 	}

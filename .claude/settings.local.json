@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "mcp__github__get_file_contents",
+      "Bash(chmod:*)",
+      "Bash(grep:*)"
+    ]
+  }
+}

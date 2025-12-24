@@ -4,13 +4,25 @@ package server
 func (s *Server) textDocumentDiagnostic(params *DocumentDiagnosticParams) (*DocumentDiagnosticReport, error) {
 	result, err := s.compile()
 	if err != nil {
-		return nil, err
+		// Return empty diagnostics on compile error instead of nil
+		return &DocumentDiagnosticReport{Value: RelatedFullDocumentDiagnosticReport{
+			FullDocumentDiagnosticReport: FullDocumentDiagnosticReport{
+				Kind:  string(DiagnosticFull),
+				Items: []Diagnostic{},
+			},
+		}}, nil
+	}
+
+	// Get diagnostics for the file, or empty array if none
+	items := result.diagnostics[params.TextDocument.URI]
+	if items == nil {
+		items = []Diagnostic{}
 	}
 
 	return &DocumentDiagnosticReport{Value: RelatedFullDocumentDiagnosticReport{
 		FullDocumentDiagnosticReport: FullDocumentDiagnosticReport{
 			Kind:  string(DiagnosticFull),
-			Items: result.diagnostics[params.TextDocument.URI],
+			Items: items,
 		},
 	}}, nil
 }
@@ -19,14 +31,21 @@ func (s *Server) textDocumentDiagnostic(params *DocumentDiagnosticParams) (*Docu
 func (s *Server) workspaceDiagnostic(params *WorkspaceDiagnosticParams) (*WorkspaceDiagnosticReport, error) {
 	result, err := s.compile()
 	if err != nil {
-		return nil, err
+		// Return empty diagnostics on compile error instead of nil
+		return &WorkspaceDiagnosticReport{Items: []WorkspaceDocumentDiagnosticReport{}}, nil
 	}
 
 	items := make([]WorkspaceDocumentDiagnosticReport, 0, len(result.diagnostics))
 	for file, fileDiags := range result.diagnostics {
+		// Ensure we always have an array, not nil
+		if fileDiags == nil {
+			fileDiags = []Diagnostic{}
+		}
+
 		items = append(items, WorkspaceDocumentDiagnosticReport{
 			Value: WorkspaceFullDocumentDiagnosticReport{
-				URI: DocumentURI(file),
+				URI:     DocumentURI(file),
+				Version: 0, // Default version since we don't track document versions
 				FullDocumentDiagnosticReport: FullDocumentDiagnosticReport{
 					Kind:  string(DiagnosticFull),
 					Items: fileDiags,
