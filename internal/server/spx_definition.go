@@ -5,6 +5,7 @@ import (
 	"go/types"
 	"html/template"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -40,6 +41,7 @@ func (def SpxDefinition) CompletionItem() CompletionItem {
 	return CompletionItem{
 		Label:            def.CompletionItemLabel,
 		Kind:             def.CompletionItemKind,
+		Detail:           def.Overview,
 		Documentation:    &Or_CompletionItem_documentation{Value: MarkupContent{Kind: Markdown, Value: def.HTML()}},
 		InsertText:       def.CompletionItemInsertText,
 		InsertTextFormat: &def.CompletionItemInsertTextFormat,
@@ -811,6 +813,10 @@ func GetSpxDefinitionForFunc(fun *types.Func, recvTypeName string, pkgDoc *pkgdo
 		}
 		idName = recvTypeDisplayName + "." + idName
 	}
+
+	// Generate snippet for functions that only take a lambda parameter
+	insertText, insertTextFormat := generateFuncInsertText(fun, parsedName)
+
 	def = SpxDefinition{
 		TypeHint: fun.Type(),
 
@@ -824,10 +830,150 @@ func GetSpxDefinitionForFunc(fun *types.Func, recvTypeName string, pkgDoc *pkgdo
 
 		CompletionItemLabel:            parsedName,
 		CompletionItemKind:             FunctionCompletion,
-		CompletionItemInsertText:       parsedName,
-		CompletionItemInsertTextFormat: PlainTextTextFormat,
+		CompletionItemInsertText:       insertText,
+		CompletionItemInsertTextFormat: insertTextFormat,
 	}
 	return
+}
+
+// generateFuncInsertText generates the insert text for a function completion.
+// It analyzes the function signature and generates appropriate snippets for:
+//   - Functions with only a lambda parameter: onClick => {\n\t$0\n}
+//   - Functions with lambda that has parameters: onCloned data => {\n\t$0\n}
+//   - Functions with args + lambda: onKey ${1:KeyA}, => {\n\t$0\n}
+//   - Functions with args + lambda with params: onTouchStart ${1:"name"}, sprite => {\n\t$0\n}
+func generateFuncInsertText(fun *types.Func, parsedName string) (insertText string, insertTextFormat InsertTextFormat) {
+	sig := fun.Type().(*types.Signature)
+	params := sig.Params()
+
+	if params.Len() == 0 {
+		// No parameters, just insert the function name
+		insertText = parsedName
+		insertTextFormat = PlainTextTextFormat
+		return
+	}
+
+	// Check if the last parameter is a lambda (func type)
+	lastParamIdx := params.Len() - 1
+	lastParam := params.At(lastParamIdx)
+	lambdaSig, isLambda := lastParam.Type().(*types.Signature)
+
+	if !isLambda {
+		// Last param is not a lambda, just insert the function name
+		insertText = parsedName
+		insertTextFormat = PlainTextTextFormat
+		return
+	}
+
+	// Build the snippet
+	var sb strings.Builder
+	sb.WriteString(parsedName)
+
+	// Add preceding parameters as snippet placeholders
+	snippetIdx := 1
+	for i := 0; i < lastParamIdx; i++ {
+		param := params.At(i)
+		sb.WriteString(" ${")
+		sb.WriteString(strconv.Itoa(snippetIdx))
+		sb.WriteString(":")
+		sb.WriteString(generateDefaultValueForType(param.Type()))
+		sb.WriteString("}")
+		snippetIdx++
+		if i < lastParamIdx-1 {
+			sb.WriteString(",")
+		}
+	}
+
+	// Add comma before lambda if there are preceding params
+	if lastParamIdx > 0 {
+		sb.WriteString(",")
+	}
+
+	// Add lambda parameters
+	lambdaParams := lambdaSig.Params()
+	if lambdaParams.Len() == 0 {
+		// No lambda parameters: => {\n\t$0\n}
+		sb.WriteString(" => {\n\t$0\n}")
+	} else if lambdaParams.Len() == 1 {
+		// Single lambda parameter: data => {\n\t$0\n}
+		paramName := lambdaParams.At(0).Name()
+		if paramName == "" || paramName == "_" {
+			paramName = inferParamName(lambdaParams.At(0).Type())
+		}
+		sb.WriteString(" ")
+		sb.WriteString(paramName)
+		sb.WriteString(" => {\n\t$0\n}")
+	} else {
+		// Multiple lambda parameters: (msg, data) => {\n\t$0\n}
+		sb.WriteString(" (")
+		for i := 0; i < lambdaParams.Len(); i++ {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			paramName := lambdaParams.At(i).Name()
+			if paramName == "" || paramName == "_" {
+				paramName = inferParamName(lambdaParams.At(i).Type())
+			}
+			sb.WriteString(paramName)
+		}
+		sb.WriteString(") => {\n\t$0\n}")
+	}
+
+	insertText = sb.String()
+	insertTextFormat = SnippetTextFormat
+	return
+}
+
+// generateDefaultValueForType generates a default placeholder value for a type.
+func generateDefaultValueForType(t types.Type) string {
+	switch t := t.Underlying().(type) {
+	case *types.Basic:
+		switch t.Kind() {
+		case types.String:
+			return `""`
+		case types.Int, types.Int8, types.Int16, types.Int32, types.Int64,
+			types.Uint, types.Uint8, types.Uint16, types.Uint32, types.Uint64:
+			return "1"
+		case types.Float32, types.Float64:
+			return "1.0"
+		case types.Bool:
+			return "true"
+		}
+	case *types.Slice:
+		return "[]"
+	}
+	// For named types (like Key, Direction, etc.), use the type name as hint
+	if named, ok := t.(*types.Named); ok {
+		return named.Obj().Name()
+	}
+	return ""
+}
+
+// inferParamName infers a reasonable parameter name from its type.
+func inferParamName(t types.Type) string {
+	if named, ok := t.(*types.Named); ok {
+		name := named.Obj().Name()
+		// Convert to lowercase first letter
+		if len(name) > 0 {
+			return strings.ToLower(name[:1]) + name[1:]
+		}
+	}
+	// For basic types, use single letter names
+	switch t := t.Underlying().(type) {
+	case *types.Basic:
+		switch t.Kind() {
+		case types.String:
+			return "s"
+		case types.Int, types.Int8, types.Int16, types.Int32, types.Int64,
+			types.Uint, types.Uint8, types.Uint16, types.Uint32, types.Uint64:
+			return "n"
+		case types.Float32, types.Float64:
+			return "f"
+		case types.Bool:
+			return "ok"
+		}
+	}
+	return "v"
 }
 
 // makeSpxDefinitionOverviewForFunc makes an overview string for a function that

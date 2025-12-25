@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"syscall/js"
 	"time"
 
@@ -178,11 +179,18 @@ func ConvertJSFilesToMap(files js.Value) map[string]*xgo.File {
 	result := make(map[string]*xgo.File, keys.Length())
 	for i := range keys.Length() {
 		key := keys.Index(i).String()
+		// Decode URL-encoded file names (e.g., "%E5%AE%89%E5%8F%AF.spx" -> "安可.spx")
+		decodedKey, err := url.PathUnescape(key)
+		if err != nil {
+			decodedKey = key // fallback to original key if decode fails
+		}
 		value := files.Get(key)
 		if value.InstanceOf(js.Global().Get("Object")) {
-			result[key] = &xgo.File{
+			modTime := int64(value.Get("modTime").Int())
+			result[decodedKey] = &xgo.File{
 				Content: JSUint8ArrayToBytes(value.Get("content")),
-				ModTime: time.UnixMilli(int64(value.Get("modTime").Int())),
+				ModTime: time.UnixMilli(modTime),
+				Version: 0, // Initial version is 0, LSP versions start from 1
 			}
 		}
 	}

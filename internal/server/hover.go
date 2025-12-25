@@ -59,9 +59,22 @@ func (s *Server) textDocumentHover(params *HoverParams) (*Hover, error) {
 	}
 
 	var hoverContent strings.Builder
-	for _, spxDef := range spxDefs {
-		hoverContent.WriteString(spxDef.HTML())
+	for i, spxDef := range spxDefs {
+		// Use Overview and Detail for Markdown content
+		if spxDef.Overview != "" {
+			hoverContent.WriteString("```\n")
+			hoverContent.WriteString(spxDef.Overview)
+			hoverContent.WriteString("\n```\n")
+		}
+		if spxDef.Detail != "" {
+			hoverContent.WriteString("\n")
+			hoverContent.WriteString(spxDef.Detail)
+		}
+		if i < len(spxDefs)-1 {
+			hoverContent.WriteString("\n\n---\n\n")
+		}
 	}
+
 	return &Hover{
 		Contents: MarkupContent{
 			Kind:  Markdown,
