@@ -58,28 +58,32 @@ func (s *Server) initialize(params *InitializeParams) (*InitializeResult, error)
 		DocumentHighlightProvider: &protocol.Or_ServerCapabilities_documentHighlightProvider{
 			Value: true,
 		},
-		DocumentLinkProvider: &protocol.DocumentLinkOptions{},
+		// DocumentLinkProvider is disabled to avoid underline styling on identifiers.
+		// VSCode renders all document links with underlines, which affects readability.
+		// DocumentLinkProvider: &protocol.DocumentLinkOptions{},
 		DocumentFormattingProvider: &protocol.Or_ServerCapabilities_documentFormattingProvider{
 			Value: true,
 		},
 		RenameProvider: &protocol.RenameOptions{
 			PrepareProvider: true,
 		},
-		SemanticTokensProvider: &protocol.SemanticTokensOptions{
-			Legend: protocol.SemanticTokensLegend{
-				TokenTypes: []string{
-					"namespace", "type", "interface", "struct", "enum", "enumMember",
-					"variable", "parameter", "function", "method", "property",
-					"keyword", "comment", "string", "number", "operator", "label",
-				},
-				TokenModifiers: []string{
-					"declaration", "readonly", "static", "definition", "defaultLibrary",
-				},
-			},
-			Full: &protocol.Or_SemanticTokensOptions_full{
-				Value: true,
-			},
-		},
+		// SemanticTokensProvider is disabled to avoid underline styling issues
+		// in VSCode dark themes. TextMate grammar provides sufficient highlighting.
+		// SemanticTokensProvider: &protocol.SemanticTokensOptions{
+		// 	Legend: protocol.SemanticTokensLegend{
+		// 		TokenTypes: []string{
+		// 			"namespace", "type", "interface", "struct", "enum", "enumMember",
+		// 			"variable", "parameter", "function", "method", "property",
+		// 			"keyword", "comment", "string", "number", "operator", "label",
+		// 		},
+		// 		TokenModifiers: []string{
+		// 			"declaration", "readonly", "static", "definition", "defaultLibrary",
+		// 		},
+		// 	},
+		// 	Full: &protocol.Or_SemanticTokensOptions_full{
+		// 		Value: true,
+		// 	},
+		// },
 		InlayHintProvider: &protocol.InlayHintOptions{},
 		DiagnosticProvider: &protocol.Or_ServerCapabilities_diagnosticProvider{
 			Value: protocol.DiagnosticOptions{
